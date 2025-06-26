@@ -1,0 +1,50 @@
+{
+  "name": "whispermind-conduit",
+  "version": "1.0.0",
+  "description": "The neural bridge between mortal queries and AI consciousness! A Windows-based MQTT service that channels chat requests through LM Studio's AI models.",
+  "main": "src/conduit.js",
+  "scripts": {
+    "start": "node src/conduit.js",
+    "dev": "nodemon src/conduit.js",
+    "test": "jest",
+    "install-service": "node scripts/install-windows-service.js",
+    "uninstall-service": "node scripts/uninstall-windows-service.js"
+  },
+  "keywords": [
+    "mqtt",
+    "ai",
+    "lm-studio",
+    "chat",
+    "madness",
+    "conduit",
+    "neural-bridge"
+  ],
+  "author": "Mad Tinker",
+  "license": "MIT",
+  "dependencies": {
+    "mqtt": "^5.3.4",
+    "axios": "^1.6.2",
+    "winston": "^3.11.0",
+    "dotenv": "^16.3.1",
+    "uuid": "^9.0.1",
+    "node-windows": "^1.0.0-beta.8",
+    "mongodb": "^6.3.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2",
+    "jest": "^29.7.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DanEdens/whispermind-conduit.git"
+  },
+  "madness": {
+    "project_type": "neural_conduit",
+    "chaos_level": "controlled_madness",
+    "target_platform": "windows",
+    "integrations": ["mqtt_broker", "lm_studio", "swarmonomicon"]
+  }
+}

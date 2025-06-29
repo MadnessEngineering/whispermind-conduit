@@ -5,8 +5,11 @@
   "main": "src/conduit.js",
   "scripts": {
     "start": "node src/conduit.js",
+    "start:enhanced": "node src/enhanced-conduit.js",
     "dev": "nodemon src/conduit.js",
+    "dev:enhanced": "nodemon src/enhanced-conduit.js",
     "test": "jest",
+    "test:enhanced": "node scripts/test-enhanced-conduit.js",
     "install-service": "node scripts/install-windows-service.js",
     "uninstall-service": "node scripts/uninstall-windows-service.js"
   },
@@ -17,11 +20,15 @@
     "chat",
     "madness",
     "conduit",
-    "neural-bridge"
+    "neural-bridge",
+    "agentic-ai",
+    "autonomous-agent"
   ],
   "author": "Mad Tinker",
   "license": "MIT",
   "dependencies": {
+    "@lmstudio/sdk": "^1.0.0",
+    "zod": "^3.22.4",
     "mqtt": "^5.3.4",
     "axios": "^1.6.2",
     "winston": "^3.11.0",
@@ -45,6 +52,12 @@
     "project_type": "neural_conduit",
     "chaos_level": "controlled_madness",
     "target_platform": "windows",
-    "integrations": ["mqtt_broker", "lm_studio", "swarmonomicon"]
+    "integrations": ["mqtt_broker", "lm_studio", "swarmonomicon"],
+    "agentic_features": {
+      "enabled": true,
+      "sdk_version": "1.0.0",
+      "tools": ["file_analyzer", "system_info", "mad_calculator"],
+      "max_rounds": 10
+    }
   }
 }

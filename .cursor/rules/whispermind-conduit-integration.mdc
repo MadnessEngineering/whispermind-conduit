@@ -1,0 +1,330 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# Whispermind Conduit Integration Guide
+
+## Overview
+The Whispermind Conduit is a neural bridge service that connects chat interfaces to LM Studio AI models via MQTT. It provides both standard chat and advanced agentic capabilities for autonomous problem-solving.
+
+## Architecture
+```
+Website Chat → MQTT Broker → Whispermind Conduit → LM Studio → AI Response
+```
+
+## Key Files Reference
+- **Main Service**: [src/conduit.js](mdc:src/conduit.js) - Original HTTP-based implementation
+- **Enhanced Service**: [src/enhanced-conduit.js](mdc:src/enhanced-conduit.js) - LM Studio SDK with agentic capabilities
+- **Configuration**: [package.json](mdc:package.json) - Dependencies and scripts
+- **Documentation**: [AGENTIC_ENHANCEMENT_GUIDE.md](mdc:AGENTIC_ENHANCEMENT_GUIDE.md) - Complete integration guide
+- **Testing**: [scripts/test-enhanced-conduit.js](mdc:scripts/test-enhanced-conduit.js) - Test suite example
+
+## MQTT Configuration
+
+### Connection Details
+```javascript
+const mqttConfig = {
+  broker: 'mqtt://localhost:1883',
+  topics: {
+    request: 'chat/request',      // Send chat requests here
+    response: 'chat/response',    // Listen for AI responses
+    status: 'conduit/status',     // Service status updates
+    agent_activity: 'conduit/agent' // Real-time agent activity (enhanced mode)
+  }
+}
+```
+
+### Required Dependencies
+```bash
+npm install mqtt uuid  # For MQTT client integration
+```
+
+## Request Formats
+
+### Standard Chat Request
+```json
+{
+  "id": "unique-request-id",
+  "user": "username",
+  "message": "Your question here",
+  "temperature": 0.7,
+  "max_tokens": 1000
+}
+```
+
+### Agentic Mode Request (Enhanced)
+```json
+{
+  "id": "unique-request-id",
+  "user": "username",
+  "message": "Analyze system performance and calculate memory usage",
+  "agent_mode": "autonomous",  // Triggers agentic capabilities
+  "temperature": 0.7,
+  "max_tokens": 1000
+}
+```
+
+## Response Formats
+
+### Standard Response
+```json
+{
+  "id": "request-id",
+  "user": "username",
+  "original_message": "Your question...",
+  "response": "AI response text",
+  "processing_time_ms": 1500,
+  "timestamp": "2024-01-20T15:30:00.000Z",
+  "model": "qwen2.5-7b-instruct",
+  "madness_level": "controlled_chaos"
+}
+```
+
+### Enhanced Response (Agentic Mode)
+```json
+{
+  "id": "request-id",
+  "user": "username",
+  "original_message": "Analyze system...",
+  "response": "I analyzed your system using multiple tools...",
+  "processing_time_ms": 3500,
+  "timestamp": "2024-01-20T15:30:00.000Z",
+  "model": "qwen2.5-7b-instruct",
+  "madness_level": "autonomous_chaos",
+  "agent_rounds": 3,                    // Number of tool execution rounds
+  "tools_used": ["system_info", "mad_calculator"]  // Tools the AI used
+}
+```
+
+## Service Modes
+
+### 1. Original Conduit (v1.0)
+- **Start**: `npm run start` or `npm run dev`
+- **Features**: Basic chat via HTTP to LM Studio
+- **Use Case**: Simple Q&A interactions
+
+### 2. Enhanced Conduit (v2.0) - RECOMMENDED
+- **Start**: `npm run start:enhanced` or `npm run dev:enhanced`
+- **Features**:
+  - Native LM Studio SDK integration
+  - Autonomous agentic tool use (.act() API)
+  - Built-in tools: file_analyzer, system_info, mad_calculator
+  - Structured output with Zod validation
+  - Real-time agent activity streaming
+- **Use Case**: Complex problem-solving, analysis tasks
+
+## Agentic Capabilities (Enhanced Mode)
+
+### Available Tools
+1. **file_analyzer**: Analyze file contents and structure
+2. **system_info**: Get system metrics and health data
+3. **mad_calculator**: Perform mathematical calculations
+
+### Auto-Triggering Keywords
+The AI automatically switches to agentic mode when messages contain:
+- "solve", "analyze", "calculate"
+- Complex multi-step requests
+- Or when `agent_mode: "autonomous"` is explicitly set
+
+### Multi-Round Execution Flow
+```
+Round 1: AI decides to use system_info tool
+Round 2: AI uses mad_calculator with system data
+Round 3: AI provides analysis and recommendations
+```
+
+## Integration Example for Inventorium Chat
+
+```javascript
+import mqtt from 'mqtt';
+import { v4 as uuidv4 } from 'uuid';
+
+class WhispermindChat {
+  constructor() {
+    this.client = mqtt.connect('mqtt://localhost:1883');
+    this.pendingRequests = new Map();
+
+    // Subscribe to responses
+    this.client.subscribe(['chat/response', 'conduit/agent']);
+
+    this.client.on('message', (topic, message) => {
+      const data = JSON.parse(message.toString());
+
+      if (topic === 'chat/response') {
+        this.handleChatResponse(data);
+      } else if (topic === 'conduit/agent') {
+        this.handleAgentActivity(data);
+      }
+    });
+  }
+
+  async sendMessage(userMessage, options = {}) {
+    const requestId = uuidv4();
+    const request = {
+      id: requestId,
+      user: options.user || 'website-user',
+      message: userMessage,
+      agent_mode: options.enableAgentic ? 'autonomous' : 'standard',
+      temperature: options.temperature || 0.7,
+      max_tokens: options.maxTokens || 1000
+    };
+
+    // Store promise for this request
+    return new Promise((resolve, reject) => {
+      this.pendingRequests.set(requestId, { resolve, reject });
+
+      // Publish request
+      this.client.publish('chat/request', JSON.stringify(request));
+
+      // Timeout after 30 seconds
+      setTimeout(() => {
+        if (this.pendingRequests.has(requestId)) {
+          this.pendingRequests.delete(requestId);
+          reject(new Error('Request timeout'));
+        }
+      }, 30000);
+    });
+  }
+
+  handleChatResponse(data) {
+    const pending = this.pendingRequests.get(data.id);
+    if (pending) {
+      this.pendingRequests.delete(data.id);
+
+      if (data.error) {
+        pending.reject(new Error(data.error_details));
+      } else {
+        pending.resolve({
+          response: data.response,
+          processingTime: data.processing_time_ms,
+          agentRounds: data.agent_rounds || 0,
+          toolsUsed: data.tools_used || [],
+          madnessLevel: data.madness_level
+        });
+      }
+    }
+  }
+
+  handleAgentActivity(data) {
+    // Emit real-time agent activity for UI updates
+    this.emit('agentActivity', {
+      requestId: data.request_id,
+      tool: data.activity.tool_name,
+      status: data.activity.status,
+      round: data.activity.round
+    });
+  }
+}
+
+// Usage in Inventorium chat
+const chat = new WhispermindChat();
+
+// Standard chat
+const response = await chat.sendMessage("Hello, how can you help me?");
+
+// Agentic mode for complex tasks
+const agenticResponse = await chat.sendMessage(
+  "Analyze the current system performance and provide recommendations",
+  { enableAgentic: true }
+);
+```
+
+## Environment Setup
+
+Create `.env` file in Whispermind_Conduit directory:
+```env
+# MQTT Configuration
+MQTT_BROKER=mqtt://localhost:1883
+MQTT_REQUEST_TOPIC=chat/request
+MQTT_RESPONSE_TOPIC=chat/response
+MQTT_STATUS_TOPIC=conduit/status
+MQTT_AGENT_TOPIC=conduit/agent
+
+# LM Studio Configuration (Enhanced Mode)
+LM_STUDIO_PORT=1234
+LM_STUDIO_MODEL=qwen2.5-7b-instruct
+
+# Service Configuration
+LOG_LEVEL=info
+```
+
+## Testing Integration
+
+Use the test script as reference: [scripts/test-enhanced-conduit.js](mdc:scripts/test-enhanced-conduit.js)
+
+```bash
+# Test the enhanced conduit
+npm run test:enhanced
+
+# Or create your own test
+node -e "
+const mqtt = require('mqtt');
+const client = mqtt.connect('mqtt://localhost:1883');
+client.on('connect', () => {
+  client.publish('chat/request', JSON.stringify({
+    id: 'test-123',
+    user: 'test',
+    message: 'Hello from Inventorium!',
+    agent_mode: 'standard'
+  }));
+});
+"
+```
+
+## Deployment Checklist
+
+1. **Prerequisites**:
+   - ✅ MQTT broker running (Mosquitto recommended)
+   - ✅ LM Studio running with model loaded
+   - ✅ Node.js environment set up
+
+2. **Service Start**:
+   ```bash
+   cd /path/to/Whispermind_Conduit
+   cp .env.example .env  # Configure as needed
+   npm install
+   npm run start:enhanced  # For agentic capabilities
+   ```
+
+3. **Verify Connection**:
+   - Check service logs for "Enhanced neural bridge activated"
+   - Test with `npm run test:enhanced`
+   - Monitor MQTT topics for activity
+
+## Error Handling
+
+```javascript
+// Handle connection errors
+client.on('error', (error) => {
+  console.error('MQTT connection error:', error);
+  // Implement reconnection logic
+});
+
+// Handle service offline
+client.on('message', (topic, message) => {
+  if (topic === 'conduit/status') {
+    const status = JSON.parse(message.toString());
+    if (status.status === 'OFFLINE') {
+      // Handle service downtime
+      this.showServiceUnavailable();
+    }
+  }
+});
+```
+
+## Performance Considerations
+
+- **Standard Mode**: ~500-2000ms response time
+- **Agentic Mode**: ~2000-10000ms (multi-round execution)
+- **Concurrent Requests**: Service handles queue automatically
+- **Resource Usage**: Enhanced mode uses more compute for tool execution
+
+## Security Notes
+
+- MQTT broker should be secured in production
+- Consider authentication and SSL for production deployments
+- Built-in tools are safe, but custom tools need security review
+- Rate limiting recommended for public-facing implementations
+
+This integration enables Inventorium to leverage both simple chat and advanced agentic AI capabilities through the Whispermind Conduit neural bridge!

@@ -4,25 +4,27 @@
  * 🧠 Enhanced Whispermind_Conduit - Agentic Neural Bridge Architecture 🧠
  * 
  * The enhanced mad conduit with autonomous AI agent capabilities!
- * Now featuring LM Studio SDK integration with multi-round tool execution.
+ * Now featuring LM Studio SDK integration with multi-round tool execution and Redis persistence.
  * 
  * NEW FEATURES:
  * - 🤖 Agentic Tool Use via .act() API
  * - 📋 Structured Output with Zod schemas
  * - ⚡ Native LM Studio SDK integration
  * - 🛠️ Tool-enabled autonomous problem solving
+ * - 💾 Redis pub/sub with conversation history
+ * - 👤 User session management and persistence
  * 
  * Author: Mad Tinker
  * Project: Madness Interactive - Enhanced Whispermind_Conduit
  */
 
-const mqtt = require('mqtt');
 const winston = require('winston');
 const dotenv = require('dotenv');
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs').promises;
 const path = require('path');
 const { z } = require('zod');
+const Redis = require('ioredis');
 
 // LM Studio SDK Integration
 const LMStudio = require('@lmstudio/sdk');
@@ -78,22 +80,42 @@ const ToolResultSchema = z.object({
     execution_time_ms: z.number()
 });
 
+const UserSessionSchema = z.object({
+    userId: z.string(),
+    preferences: z.object({
+        agenticMode: z.boolean().default(false),
+        temperature: z.number().default(0.7),
+        maxTokens: z.number().default(1000)
+    }).optional(),
+    context: z.string().optional(),
+    lastActivity: z.string(),
+    conversationCount: z.number().default(0)
+});
+
 /**
- * 🌟 Enhanced Whispermind_Conduit - The Agentic Neural Bridge Service
+ * 🌟 Enhanced Whispermind_Conduit - The Agentic Neural Bridge Service with Redis
  */
 class EnhancedWhispermindConduit
 {
     constructor()
     {
         this.config = {
-            mqtt: {
-                broker: process.env.MQTT_BROKER || 'mqtt://localhost:1883',
-                clientId: `enhanced-whispermind-conduit-${uuidv4()}`,
-                topics: {
-                    request: process.env.MQTT_REQUEST_TOPIC || 'chat/request',
-                    response: process.env.MQTT_RESPONSE_TOPIC || 'chat/response',
-                    status: process.env.MQTT_STATUS_TOPIC || 'conduit/status',
-                    agent_activity: process.env.MQTT_AGENT_TOPIC || 'conduit/agent'
+            redis: {
+                host: process.env.REDIS_HOST || 'localhost',
+                port: parseInt(process.env.REDIS_PORT) || 6379,
+                password: process.env.REDIS_PASSWORD || null,
+                db: parseInt(process.env.REDIS_DB) || 0,
+                channels: {
+                    request: process.env.REDIS_REQUEST_CHANNEL || 'whispermind:request',
+                    response: process.env.REDIS_RESPONSE_CHANNEL || 'whispermind:response',
+                    status: process.env.REDIS_STATUS_CHANNEL || 'whispermind:status',
+                    agent_activity: process.env.REDIS_AGENT_CHANNEL || 'whispermind:agent'
+                },
+                keys: {
+                    conversations: 'conversations',
+                    sessions: 'sessions',
+                    agent_logs: 'agent_logs',
+                    service_status: 'service:status'
                 }
             },
             lmStudio: {
@@ -108,13 +130,14 @@ class EnhancedWhispermindConduit
             }
         };
 
-        this.mqttClient = null;
+        this.redis = null;
+        this.redisSub = null;
         this.lmStudio = null;
         this.model = null;
         this.isConnected = false;
         this.processingQueue = new Map();
 
-        logger.info('🧠✨ Enhanced Whispermind_Conduit initialized with agentic capabilities!', {
+        logger.info('🧠✨ Enhanced Whispermind_Conduit initialized with Redis and agentic capabilities!', {
             config: this.config
         });
     }
@@ -126,15 +149,15 @@ class EnhancedWhispermindConduit
     {
         try
         {
-            logger.info('🌟 Starting Enhanced Whispermind_Conduit agentic neural bridge...');
+            logger.info('🌟 Starting Enhanced Whispermind_Conduit agentic neural bridge with Redis...');
 
             await this.initializeLMStudio();
-            await this.connectMQTT();
+            await this.connectRedis();
 
             // Publish startup status
-            await this.publishStatus('ONLINE', 'Enhanced neural bridge activated - Ready for autonomous madness!');
+            await this.publishStatus('ONLINE', 'Enhanced neural bridge activated - Ready for autonomous madness with Redis persistence!');
 
-            logger.info('🎭✨ Enhanced Whispermind_Conduit is LIVE with agentic powers!');
+            logger.info('🎭✨ Enhanced Whispermind_Conduit is LIVE with agentic powers and Redis persistence!');
 
         } catch (error)
         {
@@ -171,74 +194,101 @@ class EnhancedWhispermindConduit
     }
 
     /**
-     * 🔌 Connect to MQTT broker (similar to original)
+     * 🔌 Connect to Redis with pub/sub
      */
-    async connectMQTT()
-    {
-        return new Promise((resolve, reject) =>
-        {
-            logger.info('🔌 Connecting to MQTT broker...', { broker: this.config.mqtt.broker });
-
-            this.mqttClient = mqtt.connect(this.config.mqtt.broker, {
-                clientId: this.config.mqtt.clientId,
-                clean: true,
-                connectTimeout: 30000,
-                reconnectPeriod: 5000
-            });
-
-            this.mqttClient.on('connect', () =>
-            {
-                logger.info('✅ MQTT connection established!');
-                this.isConnected = true;
-
-                // Subscribe to request topic
-                this.mqttClient.subscribe(this.config.mqtt.topics.request, (err) =>
-                {
-                    if (err)
-                    {
-                        logger.error('❌ Failed to subscribe to request topic:', err);
-                        reject(err);
-                    } else
-                    {
-                        logger.info('👂 Listening for agentic chat requests on:', this.config.mqtt.topics.request);
-                        resolve();
-                    }
-                });
-            });
-
-            this.mqttClient.on('message', (topic, message) =>
-            {
-                this.handleIncomingMessage(topic, message);
-            });
-
-            this.mqttClient.on('error', (error) =>
-            {
-                logger.error('💥 MQTT connection error:', error);
-                this.isConnected = false;
-                reject(error);
-            });
-
-            this.mqttClient.on('close', () =>
-            {
-                logger.warn('🔌 MQTT connection closed');
-                this.isConnected = false;
-            });
-        });
-    }
-
-    /**
-     * 📨 Handle incoming MQTT messages
-     */
-    async handleIncomingMessage(topic, message)
+    async connectRedis()
     {
         try
         {
-            if (topic !== this.config.mqtt.topics.request)
+            logger.info('🔌 Connecting to Redis...', {
+                host: this.config.redis.host,
+                port: this.config.redis.port
+            });
+
+            // Main Redis connection for pub/writes
+            this.redis = new Redis({
+                host: this.config.redis.host,
+                port: this.config.redis.port,
+                password: this.config.redis.password,
+                db: this.config.redis.db,
+                retryDelayOnFailover: 100,
+                enableOfflineQueue: false,
+                maxRetriesPerRequest: 3
+            });
+
+            // Separate Redis connection for subscriptions
+            this.redisSub = new Redis({
+                host: this.config.redis.host,
+                port: this.config.redis.port,
+                password: this.config.redis.password,
+                db: this.config.redis.db
+            });
+
+            // Set up event handlers
+            this.redis.on('connect', () =>
+            {
+                logger.info('✅ Redis main connection established!');
+                this.isConnected = true;
+            });
+
+            this.redis.on('error', (error) =>
+            {
+                logger.error('💥 Redis main connection error:', error);
+                this.isConnected = false;
+            });
+
+            this.redisSub.on('connect', () =>
+            {
+                logger.info('✅ Redis subscription connection established!');
+            });
+
+            this.redisSub.on('error', (error) =>
+            {
+                logger.error('💥 Redis subscription error:', error);
+            });
+
+            // Subscribe to request channel
+            await this.redisSub.subscribe(this.config.redis.channels.request);
+            logger.info('👂 Listening for agentic chat requests on:', this.config.redis.channels.request);
+
+            // Handle incoming messages
+            this.redisSub.on('message', (channel, message) =>
+            {
+                this.handleIncomingMessage(channel, message);
+            });
+
+            // Wait for connections to be ready
+            await new Promise((resolve) =>
+            {
+                if (this.isConnected)
+                {
+                    resolve();
+                } else
+                {
+                    this.redis.once('connect', resolve);
+                }
+            });
+
+        } catch (error)
+        {
+            logger.error('❌ Redis connection failed:', error);
+            throw new Error('Redis is not accessible - ensure Redis is running');
+        }
+    }
+
+    /**
+     * 📨 Handle incoming Redis messages
+     */
+    async handleIncomingMessage(channel, message)
+    {
+        try
+        {
+            if (channel !== this.config.redis.channels.request)
             {
                 return;
             }
 
-            const request = JSON.parse(message.toString());
+            const request = JSON.parse(message);
             const requestId = request.id || uuidv4();
 
             logger.info('📨 Received agentic chat request:', {
@@ -247,6 +297,9 @@ class EnhancedWhispermindConduit
                 messageLength: request.message?.length || 0,
                 agentMode: request.agent_mode || 'standard'
             });
+
+            // Update user session
+            await this.updateUserSession(request.user || 'anonymous', request);
 
             // Add to processing queue
             this.processingQueue.set(requestId, {
@@ -264,6 +317,46 @@ class EnhancedWhispermindConduit
     }
 
     /**
+     * 👤 Update user session in Redis
+     */
+    async updateUserSession(userId, request)
+    {
+        try
+        {
+            const sessionKey = `${this.config.redis.keys.sessions}:${userId}`;
+            const existingSession = await this.redis.get(sessionKey);
+
+            let session = {
+                userId,
+                preferences: {
+                    agenticMode: request.agent_mode === 'autonomous',
+                    temperature: request.temperature || 0.7,
+                    maxTokens: request.max_tokens || 1000
+                },
+                context: request.context || '',
+                lastActivity: new Date().toISOString(),
+                conversationCount: 1
+            };
+
+            if (existingSession)
+            {
+                const parsed = JSON.parse(existingSession);
+                session.conversationCount = (parsed.conversationCount || 0) + 1;
+                session.preferences = { ...parsed.preferences, ...session.preferences };
+            }
+
+            // Store session with 24-hour TTL
+            await this.redis.setex(sessionKey, 86400, JSON.stringify(session));
+
+            logger.info('👤 Updated user session:', { userId, conversationCount: session.conversationCount });
+
+        } catch (error)
+        {
+            logger.error('❌ Error updating user session:', error);
+        }
+    }
+
+    /**
      * 🧠🤖 Process agentic chat request with LM Studio SDK
      */
     async processAgenticRequest(requestId, request)
@@ -277,7 +370,10 @@ class EnhancedWhispermindConduit
             let toolsUsed = [];
 
             // Determine processing mode
-            const useAgentMode = request.agent_mode === 'autonomous' || request.message.includes('solve') || request.message.includes('analyze');
+            const useAgentMode = request.agent_mode === 'autonomous' ||
+                request.message.includes('solve') ||
+                request.message.includes('analyze') ||
+                request.message.includes('calculate');
 
             let response;
             if (useAgentMode)
@@ -316,11 +412,13 @@ class EnhancedWhispermindConduit
                 tools_used: toolsUsed.length > 0 ? [...new Set(toolsUsed)] : undefined
             });
 
+            // Store conversation in Redis
+            await this.storeConversation(request.user || 'anonymous', request.message, responseMessage);
+
             // Publish structured response
-            this.mqttClient.publish(
-                this.config.mqtt.topics.response,
-                JSON.stringify(responseMessage),
-                { qos: 1 }
+            await this.redis.publish(
+                this.config.redis.channels.response,
+                JSON.stringify(responseMessage)
             );
 
             logger.info('✅ Agentic request processed successfully!', {
@@ -337,6 +435,39 @@ class EnhancedWhispermindConduit
         {
             logger.error('💥 Error processing agentic request:', error);
             await this.sendErrorResponse(requestId, request, error);
+        }
+    }
+
+    /**
+     * 💾 Store conversation in Redis
+     */
+    async storeConversation(userId, userMessage, responseMessage)
+    {
+        try
+        {
+            const conversationKey = `${this.config.redis.keys.conversations}:${userId}`;
+            const conversationEntry = {
+                timestamp: new Date().toISOString(),
+                userMessage,
+                aiResponse: responseMessage.response,
+                processingTime: responseMessage.processing_time_ms,
+                agentRounds: responseMessage.agent_rounds || 0,
+                toolsUsed: responseMessage.tools_used || [],
+                madnessLevel: responseMessage.madness_level
+            };
+
+            // Store conversation entry (keep last 100 messages)
+            await this.redis.lpush(conversationKey, JSON.stringify(conversationEntry));
+            await this.redis.ltrim(conversationKey, 0, 99);
+
+            // Set TTL for conversation history (7 days)
+            await this.redis.expire(conversationKey, 604800);
+
+            logger.info('💾 Stored conversation in Redis:', { userId, messageLength: userMessage.length });
+
+        } catch (error)
+        {
+            logger.error('❌ Error storing conversation:', error);
         }
     }
 
@@ -397,6 +528,25 @@ class EnhancedWhispermindConduit
                         return { error: 'Calculation failed', madness_level: 'chaotic' };
                     }
                 }
+            },
+            {
+                name: 'conversation_history',
+                description: 'Retrieve user conversation history',
+                function: async (userId, limit = 5) =>
+                {
+                    try
+                    {
+                        const conversationKey = `${this.config.redis.keys.conversations}:${userId}`;
+                        const history = await this.redis.lrange(conversationKey, 0, limit - 1);
+                        return {
+                            conversations: history.map(entry => JSON.parse(entry)),
+                            total: await this.redis.llen(conversationKey)
+                        };
+                    } catch (error)
+                    {
+                        return { error: error.message };
+                    }
+                }
             }
         ];
 
@@ -432,24 +582,42 @@ class EnhancedWhispermindConduit
     }
 
     /**
-     * 📡 Publish agent activity to MQTT
+     * 📡 Publish agent activity to Redis
      */
     async publishAgentActivity(requestId, activity)
     {
         if (!this.isConnected) return;
 
-        const activityMessage = {
-            request_id: requestId,
-            timestamp: new Date().toISOString(),
-            activity,
-            service: this.config.service.name
-        };
+        try
+        {
+            const activityMessage = {
+                request_id: requestId,
+                timestamp: new Date().toISOString(),
+                activity,
+                service: this.config.service.name
+            };
 
-        this.mqttClient.publish(
-            this.config.mqtt.topics.agent_activity,
-            JSON.stringify(activityMessage),
-            { qos: 1 }
-        );
+            // Publish to channel
+            await this.redis.publish(
+                this.config.redis.channels.agent_activity,
+                JSON.stringify(activityMessage)
+            );
+
+            // Store in agent logs stream
+            await this.redis.xadd(
+                this.config.redis.keys.agent_logs,
+                '*',
+                'requestId', requestId,
+                'tool', activity.tool_name || 'unknown',
+                'round', activity.round || 0,
+                'status', activity.status || 'unknown',
+                'timestamp', new Date().toISOString()
+            );
+
+        } catch (error)
+        {
+            logger.error('❌ Error publishing agent activity:', error);
+        }
     }
 
     /**
@@ -466,10 +634,9 @@ class EnhancedWhispermindConduit
             madness_level: 'error_chaos'
         };
 
-        this.mqttClient.publish(
-            this.config.mqtt.topics.response,
-            JSON.stringify(errorResponse),
-            { qos: 1 }
+        await this.redis.publish(
+            this.config.redis.channels.response,
+            JSON.stringify(errorResponse)
         );
 
         this.processingQueue.delete(requestId);
@@ -482,22 +649,40 @@ class EnhancedWhispermindConduit
     {
         if (!this.isConnected) return;
 
-        const statusMessage = {
-            service: this.config.service.name,
-            version: this.config.service.version,
-            status,
-            message,
-            timestamp: new Date().toISOString(),
-            processing_queue_size: this.processingQueue.size,
-            madness_level: this.config.service.madnessLevel,
-            agentic_capabilities: true
-        };
+        try
+        {
+            const statusMessage = {
+                service: this.config.service.name,
+                version: this.config.service.version,
+                status,
+                message,
+                timestamp: new Date().toISOString(),
+                processing_queue_size: this.processingQueue.size,
+                madness_level: this.config.service.madnessLevel,
+                agentic_capabilities: true,
+                redis_features: {
+                    conversation_history: true,
+                    user_sessions: true,
+                    agent_activity_logging: true
+                }
+            };
 
-        this.mqttClient.publish(
-            this.config.mqtt.topics.status,
-            JSON.stringify(statusMessage),
-            { qos: 1, retain: true }
-        );
+            // Publish status to channel
+            await this.redis.publish(
+                this.config.redis.channels.status,
+                JSON.stringify(statusMessage)
+            );
+
+            // Store current status in Redis
+            await this.redis.set(
+                this.config.redis.keys.service_status,
+                JSON.stringify(statusMessage)
+            );
+
+        } catch (error)
+        {
+            logger.error('❌ Error publishing status:', error);
+        }
     }
 
     /**
@@ -514,9 +699,14 @@ class EnhancedWhispermindConduit
             await this.model.unload();
         }
 
-        if (this.mqttClient)
+        if (this.redisSub)
         {
-            this.mqttClient.end();
+            this.redisSub.disconnect();
+        }
+
+        if (this.redis)
+        {
+            this.redis.disconnect();
         }
 
         logger.info('👋 Enhanced Whispermind_Conduit has been deactivated. The agentic madness sleeps...');
@@ -546,7 +736,7 @@ process.on('SIGTERM', async () =>
 // 🚀 Start the enhanced service if run directly
 if (require.main === module)
 {
-    logger.info('🎭✨ Welcome to the Enhanced Madness! Starting Agentic Whispermind_Conduit...');
+    logger.info('🎭✨ Welcome to the Enhanced Madness! Starting Agentic Whispermind_Conduit with Redis...');
 
     const conduit = new EnhancedWhispermindConduit();
     global.enhancedConduitInstance = conduit;

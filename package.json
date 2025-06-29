@@ -1,7 +1,7 @@
 {
   "name": "whispermind-conduit",
   "version": "1.0.0",
-  "description": "The neural bridge between mortal queries and AI consciousness! A Windows-based MQTT service that channels chat requests through LM Studio's AI models.",
+  "description": "The neural bridge between mortal queries and AI consciousness! A Redis-based service that channels chat requests through LM Studio's AI models.",
   "main": "src/conduit.js",
   "scripts": {
     "start": "node src/conduit.js",
@@ -14,7 +14,7 @@
     "uninstall-service": "node scripts/uninstall-windows-service.js"
   },
   "keywords": [
-    "mqtt",
+    "redis",
     "ai",
     "lm-studio",
     "chat",
@@ -22,13 +22,15 @@
     "conduit",
     "neural-bridge",
     "agentic-ai",
-    "autonomous-agent"
+    "autonomous-agent",
+    "conversation-history"
   ],
   "author": "Mad Tinker",
   "license": "MIT",
   "dependencies": {
     "@lmstudio/sdk": "^1.0.0",
     "zod": "^3.22.4",
+    "ioredis": "^5.3.2",
     "mqtt": "^5.3.4",
     "axios": "^1.6.2",
     "winston": "^3.11.0",
@@ -52,12 +54,27 @@
     "project_type": "neural_conduit",
     "chaos_level": "controlled_madness",
     "target_platform": "windows",
-    "integrations": ["mqtt_broker", "lm_studio", "swarmonomicon"],
+    "integrations": [
+      "redis_store",
+      "lm_studio",
+      "swarmonomicon"
+    ],
     "agentic_features": {
       "enabled": true,
       "sdk_version": "1.0.0",
-      "tools": ["file_analyzer", "system_info", "mad_calculator"],
+      "tools": [
+        "file_analyzer",
+        "system_info",
+        "mad_calculator",
+        "conversation_history"
+      ],
       "max_rounds": 10
+    },
+    "redis_features": {
+      "conversation_history": true,
+      "user_sessions": true,
+      "agent_activity_logging": true,
+      "pub_sub_messaging": true
     }
   }
 }

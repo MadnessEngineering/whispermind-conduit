@@ -11,7 +11,8 @@
     "test": "jest",
     "test:enhanced": "node scripts/test-enhanced-conduit.js",
     "install-service": "node scripts/install-windows-service.js",
-    "uninstall-service": "node scripts/uninstall-windows-service.js"
+    "uninstall-service": "node scripts/uninstall-windows-service.js",
+    "install-redis": "powershell -ExecutionPolicy Bypass -File scripts/install-redis-windows.ps1"
   },
   "keywords": [
     "redis",
